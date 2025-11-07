@@ -62,7 +62,6 @@ class JustificacionSerializer(serializers.ModelSerializer):
             }
         return None
         
-        
 class AprobacionSerializer(serializers.ModelSerializer):
     revisor = UserSerializer(read_only=True)
     class Meta:

@@ -230,7 +230,7 @@ class Documento(models.Model):
 
 
 # ---------------------------
-# Justificación (principal)
+# Justificación (principal)                                           
 # ---------------------------
 class Justificacion(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -257,8 +257,10 @@ class Justificacion(models.Model):
             models.Index(fields=["fecha_solicitud"], name="idx_justificacion_f_solicitud"),
         ]
         constraints = [
-            models.CheckConstraint(check=models.Q(fecha_ausencia_fin__gte=models.F('fecha_ausencia_inicio')),
-                                   name="chk_fecha_ausencia"),
+            models.CheckConstraint(
+                check=models.Q(fecha_ausencia_fin__gte=models.F('fecha_ausencia_inicio')),
+                name="chk_fecha_ausencia"
+            ),
         ]
 
     def __str__(self):

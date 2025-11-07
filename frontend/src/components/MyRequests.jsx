@@ -1,6 +1,7 @@
 // frontend/src/components/MyRequests.jsx
 import React, { useState, useEffect } from 'react';
 import axios from '../api/axios';
+import Layout from '../Pages/Layout';
 
 export default function MyRequests() {
   const [items, setItems] = useState([]);
@@ -18,7 +19,8 @@ export default function MyRequests() {
   }, []);
 
   return (
-    <div style={{maxWidth:900, margin:'1rem auto'}}>
+    <Layout>
+      <div style={{maxWidth:900, margin:'1rem auto'}}>
       <h3>Mis Justificaciones</h3>
       <ul>
         {items.map(j => (
@@ -28,5 +30,6 @@ export default function MyRequests() {
         ))}
       </ul>
     </div>
+    </Layout>
   );
 }
