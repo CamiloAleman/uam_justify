@@ -1,3 +1,4 @@
+// frontend/src/components/Login.jsx
 import React, { useState } from 'react';
 import axios from '../api/axios';
 import { useNavigate } from 'react-router-dom';
@@ -15,12 +16,30 @@ export default function Login() {
     setLoading(true);
     setError('');
     try {
+      // 1) Obtener tokens
       const res = await axios.post('/token/', { correo_institucional: username, password });
-      localStorage.setItem('access_token', res.data.access);
-      localStorage.setItem('refresh_token', res.data.refresh);
-      axios.defaults.headers.common['Authorization'] = `Bearer ${res.data.access}`;
-      navigate('/');  // redirige después del login
+      const { access, refresh } = res.data;
+
+      // 2) Guardar tokens y configurar header por defecto
+      localStorage.setItem('access_token', access);
+      localStorage.setItem('refresh_token', refresh);
+      axios.defaults.headers.common['Authorization'] = `Bearer ${access}`;
+
+      // 3) Obtener perfil del usuario autenticado
+      // Endpoint: GET /api/users/me/ (ver cambios en backend)
+      const profileRes = await axios.get('/usuarios/me/');
+      const user = profileRes.data;
+      localStorage.setItem('user', JSON.stringify(user));
+
+      // 4) Redirigir según rol (ajusta roles a los que uses)
+      const role = (user.role || '').toUpperCase();
+      if (role === 'ADMIN' || user.is_staff || user.is_superuser) {
+        navigate('/admin', { replace: true });
+      } else {
+        navigate('/justificaciones', { replace: true });
+      }
     } catch (err) {
+      console.error('Login error', err);
       if (err.response?.status === 401) {
         setError('Credenciales inválidas');
       } else {

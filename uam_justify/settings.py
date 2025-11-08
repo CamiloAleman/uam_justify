@@ -123,7 +123,7 @@ DATABASES = {
         'ENGINE': 'django.db.backends.postgresql',
         'NAME': 'uam_justify',
         'USER': 'postgres',
-        'PASSWORD': 'Admin123$',
+        'PASSWORD': 'Admin123',
         'HOST': 'localhost',
         'PORT': '5432',
     }
