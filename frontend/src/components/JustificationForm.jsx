@@ -195,7 +195,7 @@ export default function JustificationForm() {
           {/* Archivo principal */}
           <div>
             <label className="block text-sm mb-1">
-              Documento de respaldo (PDF/JPG/PNG) — opcional
+              Documento de respaldo (PDF/JPG/PNG)
             </label>
             <input
               type="file"

@@ -6,6 +6,7 @@ from django.contrib.auth.models import (
 )
 from django.utils import timezone
 from django.core.validators import RegexValidator
+from django.conf import settings
 
 # ---------------------------
 # Constants / Choices
@@ -43,6 +44,42 @@ MOTIVO_CHOICES = [
     ("DEP", "Deportiva"),
     ("OTR", "Otro"),
 ]
+
+
+# ---------------------------
+# Facultad / Carrera / Asignatura
+# ---------------------------
+class Facultad(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    nombre = models.CharField(max_length=255, unique=True)
+    descripcion = models.TextField(blank=True, null=True)
+    estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default="ACTIVO")
+    codigo = models.CharField(max_length=20, null=False, default="SINCODIGO")    
+    fecha_registro = models.DateTimeField(default=timezone.now)
+    fecha_ultima_modificacion = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "facultad"
+
+    def __str__(self):
+        return self.nombre
+
+
+
+class Carrera(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    nombre = models.CharField(max_length=255, unique=True)
+    descripcion = models.TextField(blank=True, null=True)
+    estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default="ACTIVO")
+    facultad = models.ForeignKey(Facultad, on_delete=models.PROTECT, related_name="carreras")
+    fecha_registro = models.DateTimeField(default=timezone.now)
+    fecha_ultima_modificacion = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "carrera"
+
+    def __str__(self):
+        return self.nombre
 
 
 # ---------------------------
@@ -100,6 +137,14 @@ class User(AbstractBaseUser, PermissionsMixin):
     telefono_celular = models.CharField(max_length=20, blank=True, null=True)
     telefono_oficina = models.CharField(max_length=20, blank=True, null=True)
 
+    carrera = models.ForeignKey(
+        'Carrera', on_delete=models.SET_NULL, null=True, blank=True, related_name='usuarios'
+    )
+
+    facultad = models.ForeignKey(
+        'Facultad', on_delete=models.SET_NULL, null=True, blank=True, related_name='usuarios'
+    )
+
     cif_identificacion = models.CharField(max_length=50, unique=True,
                                           validators=[RegexValidator(r'^[\w-]+$', 'Formato inválido para CIF')])
 
@@ -108,6 +153,11 @@ class User(AbstractBaseUser, PermissionsMixin):
     fecha_ultima_modificacion = models.DateTimeField(auto_now=True)
 
     role = models.CharField(max_length=30, choices=ROLE_CHOICES, default="ESTUDIANTE")
+
+    #vinculación a carrera (para estudiantes y docentes)
+    carrera = models.ForeignKey(
+        Carrera, on_delete=models.SET_NULL, null=True, blank=True, related_name='usuarios'
+    )
 
     # fields required by AbstractBaseUser
     is_staff = models.BooleanField(default=False)
@@ -132,41 +182,6 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     def __str__(self):
         return f"{self.primer_nombre} {self.primer_apellido} <{self.correo_institucional}>"
-
-
-# ---------------------------
-# Facultad / Carrera / Asignatura
-# ---------------------------
-class Facultad(models.Model):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    nombre = models.CharField(max_length=255, unique=True)
-    descripcion = models.TextField(blank=True, null=True)
-    estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default="ACTIVO")
-    codigo = models.CharField(max_length=20, null=False, default="SINCODIGO")    
-    fecha_registro = models.DateTimeField(default=timezone.now)
-    fecha_ultima_modificacion = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        db_table = "facultad"
-
-    def __str__(self):
-        return self.nombre
-
-
-class Carrera(models.Model):
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    nombre = models.CharField(max_length=255, unique=True)
-    descripcion = models.TextField(blank=True, null=True)
-    estado = models.CharField(max_length=20, choices=ESTADO_CHOICES, default="ACTIVO")
-    facultad = models.ForeignKey(Facultad, on_delete=models.PROTECT, related_name="carreras")
-    fecha_registro = models.DateTimeField(default=timezone.now)
-    fecha_ultima_modificacion = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        db_table = "carrera"
-
-    def __str__(self):
-        return self.nombre
 
 
 class Asignatura(models.Model):

@@ -33,10 +33,19 @@ export default function Login() {
 
       // 4) Redirigir según rol (ajusta roles a los que uses)
       const role = (user.role || '').toUpperCase();
+
       if (role === 'ADMIN' || user.is_staff || user.is_superuser) {
+        // Administrador -> panel admin
         navigate('/admin', { replace: true });
-      } else {
+      } else if (role === 'ESTUDIANTE') {
+        // Estudiante -> listado de justificaciones
         navigate('/justificaciones', { replace: true });
+      } else if (role === 'DOCENTE' || role === 'COORDINADOR') {
+        // Docente / Coordinador -> panel de aprobaciones
+        navigate('/aprobaciones', { replace: true });
+      } else {
+        // Fallback: inicio o dashboard general
+        navigate('/', { replace: true });
       }
     } catch (err) {
       console.error('Login error', err);

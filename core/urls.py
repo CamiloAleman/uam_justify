@@ -1,7 +1,7 @@
 # core/urls.py
 from rest_framework import routers
 from django.urls import path, include
-from .views import JustificacionViewSet, AprobacionViewSet, AsignaturaViewSet, DocumentoViewSet, FacultadViewSet, UserViewSet, MotivoAusenciaViewset
+from .views import JustificacionViewSet, AprobacionViewSet, AsignaturaViewSet, DocumentoViewSet, FacultadViewSet, UserViewSet, MotivoAusenciaViewset, CarreraViewSet
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 
 router = routers.DefaultRouter()
@@ -12,6 +12,7 @@ router.register(r'documentos', DocumentoViewSet, basename='documento')
 router.register(r'facultades', FacultadViewSet, basename='facultad')
 router.register(r'usuarios', UserViewSet, basename='user')
 router.register(r'motivos-ausencia', MotivoAusenciaViewset, basename='motivos-ausencia')
+router.register(r'carreras', CarreraViewSet, basename='carrera')
 
 urlpatterns = [
     path('', include(router.urls)),

@@ -2,11 +2,13 @@
 from rest_framework import serializers
 from django.core.files.storage import default_storage
 from django.utils.text import get_valid_filename
+from django.contrib.auth.hashers import make_password
+
 import hashlib
 
 from .models import (
     User, Asignatura, MotivoAusencia, Documento,
-    Justificacion, Aprobacion, Facultad
+    Justificacion, Aprobacion, Facultad, Carrera
 )
 
 # ---------- Catálogos ----------
@@ -21,20 +23,138 @@ class FacultadSerializer(serializers.ModelSerializer):
         model = Facultad
         fields = ['id', 'nombre', 'descripcion', 'estado', 'codigo', 'fecha_registro', 'fecha_ultima_modificacion']
 
+class CarreraSerializer(serializers.ModelSerializer):
+    
+    facultad = FacultadSerializer(read_only=True)          # nested read
+    facultad_id = serializers.PrimaryKeyRelatedField(      # write-only PK
+        source='facultad', queryset=Facultad.objects.all(), write_only=True, required=False, allow_null=True)
 
-class AsignaturaSerializer(serializers.ModelSerializer):
     class Meta:
-        model = Asignatura
-        fields = ['id', 'codigo', 'nombre', 'facultad', 'docente']
+        model = Carrera
+        fields = ['id', 'nombre', 'descripcion', 'estado', 'facultad','facultad_id']
 
 
 class UserSerializer(serializers.ModelSerializer):
+    carrera = CarreraSerializer(read_only=True)
+    carrera_id = serializers.PrimaryKeyRelatedField(source='carrera', queryset=Carrera.objects.all(), 
+                                                    write_only=True, required=False, allow_null = True)
+    
+    facultad = FacultadSerializer(read_only=True)    
+    facultad_id = serializers.PrimaryKeyRelatedField(
+        source='facultad', queryset=Facultad.objects.all(),
+        write_only=True, required=False, allow_null=True
+    )
+
+    password = serializers.CharField(write_only=True, required=False, allow_blank=True)
+
     class Meta:
         model = User
         fields = [
             'id', 'primer_nombre', 'segundo_nombre', 'primer_apellido', 'segundo_apellido',
-            'correo_institucional', 'cif_identificacion', 'role'
+            'correo_institucional', 'cif_identificacion', 'role', 'carrera','carrera_id', 'facultad', 'facultad_id', 'password'
         ]
+        read_only_fields = ['id']
+
+    def validate(self, attrs):
+        """
+        Validación cross-field:
+        - DOCENTE: facultad obligatoria
+        - COORDINADOR: carrera obligatoria
+        - ESTUDIANTE: carrera obligatoria
+        """
+        # role puede venir en attrs (si se actualiza) o consultarse desde instance
+        #role = attrs.get('role', getattr(self.instance, 'role', None))
+
+        role = None
+        if 'role' in attrs:
+            role = attrs.get('role')
+        elif self.instance:
+            role = self.instance.role    
+
+        # 'carrera' y 'facultad' vienen en attrs por source, o en la instancia
+        carrera = attrs.get('carrera') if 'carrera' in attrs else getattr(self.instance, 'carrera', None)
+        facultad = attrs.get('facultad') if 'facultad' in attrs else getattr(self.instance, 'facultad', None)
+
+        role_str = str(role).upper() if role else None
+
+        if role_str == 'DOCENTE' and not facultad:
+            raise serializers.ValidationError({'facultad_id': 'La facultad es obligatoria para usuarios con rol DOCENTE.'})
+        if role_str in ('COORDINADOR', 'ESTUDIANTE') and not carrera:
+            raise serializers.ValidationError({'carrera_id': 'La carrera es obligatoria para el rol seleccionado.'})
+
+        return super().validate(attrs)
+    
+    def create(self, validated_data):
+        # validated_data puede contener 'carrera' y/o 'facultad' (objetos)
+        carrera = validated_data.pop('carrera', None)
+        facultad = validated_data.pop('facultad', None)
+
+        # extraer password si fue provisto
+        pwd = validated_data.pop('password', None)
+
+        # regla: si es estudiante y carrera provista -> asignar facultad según carrera
+        role = validated_data.get('role', None)
+        role_str = str(role).upper() if role else None
+        if role_str == 'ESTUDIANTE' and carrera and not facultad:
+            facultad = carrera.facultad  # asignar FK de la carrera
+
+        user = User.objects.create(**validated_data)
+        # set relations afterwards to avoid PK problems
+        if carrera:
+            user.carrera = carrera
+        if facultad:
+            user.facultad = facultad
+
+        if pwd:
+            # si tu modelo hereda de AbstractBaseUser, usa set_password
+            try:
+                user.set_password(pwd)
+            except Exception:
+                # fallback si tu modelo usa campo password_hash
+                user.password = make_password(pwd)
+
+        user.save()
+
+        return user
+
+    def update(self, instance, validated_data):
+        # similar a create: mantener coherencia en update
+        carrera = validated_data.pop('carrera', None)
+        facultad = validated_data.pop('facultad', None)            
+        pwd = validated_data.pop('password', None)
+
+
+        role = validated_data.get('role', getattr(instance, 'role', None))
+        role_str = str(role).upper() if role else None
+
+        # Si al actualizar se establece carrera para ESTUDIANTE, fijar facultad si no se pasó.
+        if role_str == 'ESTUDIANTE' and carrera and not facultad:
+            facultad = carrera.facultad
+
+        # Aplicar otros cambios directos
+        for attr, val in validated_data.items():
+            setattr(instance, attr, val)
+
+        # relaciones
+        if carrera is not None:
+            instance.carrera = carrera
+        if facultad is not None:
+            instance.facultad = facultad
+
+        if pwd:
+            try:
+                instance.set_password(pwd)
+            except Exception:
+                instance.password = make_password(pwd)
+
+        instance.save()
+        return instance
+
+class AsignaturaSerializer(serializers.ModelSerializer):
+    
+    class Meta:
+        model = Asignatura
+        fields = ['id', 'codigo', 'nombre', 'facultad', 'docente']
 
 
 class DocumentoSerializer(serializers.ModelSerializer):
@@ -51,6 +171,11 @@ class JustificacionSerializer(serializers.ModelSerializer):
     estudiante_detail = serializers.SerializerMethodField(read_only=True)
     estudiante = serializers.PrimaryKeyRelatedField(read_only=True)
 
+    asignatura_nombre = serializers.SerializerMethodField(read_only=True)
+    asignatura_detail = serializers.SerializerMethodField(read_only=True)
+
+    motivo_nombre = serializers.SerializerMethodField(read_only=True)
+
     # frontend envía archivo; creamos Documento y lo enlazamos
     archivo_principal = serializers.FileField(write_only=True, required=False, allow_empty_file=False)
     archivo_principal_id = serializers.UUIDField(source='archivo_principal.id', read_only=True)
@@ -64,10 +189,13 @@ class JustificacionSerializer(serializers.ModelSerializer):
             'estudiante',
             'estudiante_detail',
             'asignatura',
+            'asignatura_nombre',
+            'asignatura_detail',
             'fecha_ausencia_inicio',
             'fecha_ausencia_fin',
             'fecha_solicitud',
             'motivo',
+            'motivo_nombre',
             'descripcion_detallada',
             'archivo_principal',
             'archivo_principal_id',
@@ -81,6 +209,13 @@ class JustificacionSerializer(serializers.ModelSerializer):
             'fecha_resolucion', 'fecha_actualizacion'
         ]
 
+    def get_motivo_nombre(self, obj):
+        m = getattr(obj, 'motivo', None)
+        if not m:
+            return None
+        # si motivo es FK a un modelo
+        return getattr(m, 'nombre', str(m))
+
     def get_estudiante_detail(self, obj):
         u = getattr(obj, 'estudiante', None)
         if u:
@@ -89,6 +224,23 @@ class JustificacionSerializer(serializers.ModelSerializer):
                 "nombre": f"{u.primer_nombre} {u.primer_apellido}",
                 "correo": u.correo_institucional,
                 "role": u.role,
+            }
+        return None
+    
+    def get_asignatura_nombre(self, obj):
+        a = getattr(obj, 'asignatura', None)
+        if a:
+            # Ajusta el campo si tu modelo usa otro nombre (ej.: 'nombre_asignatura')
+            return getattr(a, 'nombre', str(a))
+        return None
+
+    def get_asignatura_detail(self, obj):
+        a = getattr(obj, 'asignatura', None)
+        if a:
+            return {
+                "id": a.id,
+                "nombre": getattr(a, 'nombre', ''),
+                # añade otros campos si conviene: "codigo": a.codigo, etc.
             }
         return None
 
@@ -134,6 +286,7 @@ class JustificacionSerializer(serializers.ModelSerializer):
 
 # ---------- Aprobación ----------
 class AprobacionSerializer(serializers.ModelSerializer):
+    justificacion = JustificacionSerializer(read_only=True)
     revisor = UserSerializer(read_only=True)
 
     class Meta:
