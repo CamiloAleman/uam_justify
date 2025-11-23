@@ -7,7 +7,7 @@ import { useNavigate } from "react-router-dom";
 export default function MyRequests() {
   const [items, setItems] = useState([]);
   const [asignaturas, setAsignaturas] = useState([]);
-  const [motivos, setMotivos] = useState([]); 
+  const [motivos, setMotivos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [errMsg, setErrMsg] = useState("");
   const [filtro, setFiltro] = useState("");
@@ -46,6 +46,34 @@ export default function MyRequests() {
     }
   };
 
+  // --- NUEVO: obtener id del usuario autenticado (intenta varias fuentes) ---
+  const getCurrentUserId = () => {
+    try {
+      // 1) Si guardas el perfil en localStorage bajo 'user' o 'profile'
+      const userRaw = localStorage.getItem("user") || localStorage.getItem("profile");
+      if (userRaw) {
+        const u = JSON.parse(userRaw);
+        if (u?.id) return u.id;
+        if (u?.pk) return u.pk;
+        if (u?.usuario_id) return u.usuario_id;
+      }
+
+      // 2) Si guardas un token JWT en localStorage: decodificar payload
+      const token = localStorage.getItem("token") || localStorage.getItem("accessToken") || localStorage.getItem("access_token");
+      if (token) {
+        const parts = token.split(".");
+        if (parts.length === 3) {
+          const payload = JSON.parse(atob(parts[1].replace(/-/g, "+").replace(/_/g, "/")));
+          // intenta varios campos comunes
+          return payload.user_id || payload.sub || payload.id || payload.pk || null;
+        }
+      }
+    } catch (e) {
+      console.warn("No se pudo extraer id del usuario desde localStorage/token", e);
+    }
+    return null;
+  };
+
   // Cargar datos
   useEffect(() => {
     const load = async () => {
@@ -57,9 +85,63 @@ export default function MyRequests() {
           axios.get("/asignaturas/"),
           axios.get("/motivos-ausencia/"),
         ]);
-        setItems(toArray(mineRes));
-        setAsignaturas(toArray(asigRes));
-        setMotivos(toArray(motRes));
+
+        // Convertir respuesta a arrays
+        let justs = toArray(mineRes);
+        const asigs = toArray(asigRes);
+        const mots = toArray(motRes);
+
+        // --- FILTRO: quedarnos solo con las justificaciones del usuario autenticado ---
+        const currentUserId = getCurrentUserId();
+        if (currentUserId) {
+          // IMPORTANTE: aquí debes usar el nombre del campo que tu API devuelve para el autor.
+          // Ejemplos comunes: 'created_by', 'usuario', 'estudiante', 'solicitante', 'owner', 'creador'
+          // Reemplaza 'creador_id' por el campo real si es distinto.
+          const authorFieldsToTry = [
+            "creador", // { id: '...' } o id string
+            "creador_id",
+            "created_by",
+            "created_by_id",
+            "usuario",
+            "usuario_id",
+            "estudiante",
+            "estudiante_id",
+            "owner",
+            "owner_id",
+            "solicitante",
+            "solicitante_id",
+            "user",
+            "user_id",
+            "author",
+            "author_id",
+            "student",
+            "student_id",
+          ];
+
+          const fieldDetect = (j) => {
+            for (const f of authorFieldsToTry) {
+              if (j[f] !== undefined && j[f] !== null) return { field: f, value: j[f] };
+            }
+            return null;
+          };
+
+          // Normalizamos: si j[field] es objeto con id -> tomar id, si es string -> usarlo directamente
+          justs = justs.filter((j) => {
+            const detected = fieldDetect(j);
+            if (!detected) return false; // no sabemos quién lo creó -> excluir por seguridad
+            let val = detected.value;
+            if (typeof val === "object" && (val.id || val.pk)) val = val.id || val.pk;
+            // comparar como strings (por si id es uuid vs entero)
+            return String(val) === String(currentUserId);
+          });
+        } else {
+          // Si no pudimos extraer id del usuario: opción conservadora -> no filtrar
+          console.warn("No se detectó id del usuario autenticado, mostrando todas las justificaciones (modo fallback).");
+        }
+
+        setItems(justs);
+        setAsignaturas(asigs);
+        setMotivos(mots);
       } catch (e) {
         console.error(e);
         setErrMsg(
@@ -205,7 +287,6 @@ export default function MyRequests() {
                               rel="noreferrer"
                               className="text-xs text-blue-600 hover:underline"
                               onClick={(e) => {
-                                // si no envías path en la API, puedes ocultar este link
                                 if (!j.archivo_principal_path) e.preventDefault();
                               }}
                             >

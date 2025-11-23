@@ -76,7 +76,7 @@ class IsAdminOrReadOnly(permissions.BasePermission):
 class MotivoAusenciaViewset(viewsets.ModelViewSet):
     queryset = MotivoAusencia.objects.all()
     serializer_class = MotivoAusenciaSerializer
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsAuthenticated]
 
 class CarreraViewSet(viewsets.ModelViewSet):
     queryset = Carrera.objects.all()
@@ -91,6 +91,26 @@ class JustificacionViewSet(viewsets.ModelViewSet):
     
     serializer_class = JustificacionSerializer
     parser_classes = (MultiPartParser, FormParser)
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+
+        user = self.request.user
+
+        # Si es estudiante → solo sus propias justificaciones
+        if user.role == "ESTUDIANTE":
+            return qs.filter(estudiante=user)
+
+        # Si es docente → las que debe revisar
+        if user.role == "DOCENTE":
+            return qs.filter(aprobaciones__revisor=user).distinct()
+
+        # Si es coordinador → las de su carrera
+        if user.role == "COORDINADOR":
+            return qs.filter(estudiante__carrera=user.carrera).distinct()
+
+        # Si es admin → ve todo
+        return qs
 
     def get_permissions(self):
         if self.action in ['create','my_requests']:
@@ -390,7 +410,7 @@ class AsignaturaViewSet(viewsets.ModelViewSet):
     #queryset = Asignatura.objects.filter(estado='ACTIVO')
     queryset = Asignatura.objects.all()
     serializer_class = AsignaturaSerializer
-    permission_classes = [IsAdminUser]
+    permission_classes = [IsAuthenticated]
 
 class FacultadViewSet(viewsets.ModelViewSet):
     #queryset = Facultad.objects.filter(estado='ACTIVO')

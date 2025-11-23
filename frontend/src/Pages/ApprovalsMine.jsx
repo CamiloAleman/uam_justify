@@ -104,13 +104,10 @@ export default function ApprovalsMine() {
 
   // Dropdown menu state (open menu per-row)
   const [openMenuId, setOpenMenuId] = useState(null);
-  const menusRef = useRef({}); // optional refs map, not strictly required but kept for clarity
+  const menusRef = useRef({});
 
-  // close menu on outside click
   useEffect(() => {
     function onDocClick(e) {
-      // If any menu is open, close it when clicking outside
-      // We check if the clicked element is inside any menu button/menu; if not, close.
       const anyMenuContains = Object.values(menusRef.current).some((el) => el && el.contains(e.target));
       if (!anyMenuContains) {
         setOpenMenuId(null);
@@ -127,16 +124,66 @@ export default function ApprovalsMine() {
       ? `http://127.0.0.1:8000/media/${encodeURI(j?.archivo_principal_path || item?.archivo_principal_path)}`
       : null);
 
+  // --- Estado normalizado y control de actuabilidad ---
+  const normalizeEstado = (item) => {
+    const j = item.justificacion || {};
+    const raw = (j.estado || item.estado || j.status || item.status || '').toString();
+    return raw.trim().toUpperCase();
+  };
+
+  const isActionAllowed = (item) => {
+    const estado = normalizeEstado(item);
+    return estado === '' || estado === 'PENDIENTE' || estado === 'PENDING' || estado === 'POR_REVISAR' || estado === 'EN_REVISION';
+  };
+
+  const statusBadge = (item) => {
+    const estado = normalizeEstado(item);
+    if (estado === 'APROBADO' || estado === 'APPROVED') {
+      return <span className="inline-block text-xs px-2 py-1 rounded bg-green-100 text-green-800">Aprobada</span>;
+    }
+    if (estado === 'RECHAZADO' || estado === 'REJECTED') {
+      return <span className="inline-block text-xs px-2 py-1 rounded bg-red-100 text-red-800">Rechazada</span>;
+    }
+    if (estado === 'CANCELADA' || estado === 'CANCELLED') {
+      return <span className="inline-block text-xs px-2 py-1 rounded bg-gray-100 text-gray-800">Cancelada</span>;
+    }
+    return <span className="inline-block text-xs px-2 py-1 rounded bg-yellow-100 text-yellow-800">Pendiente</span>;
+  };
+
+  // --- NUEVA LÓGICA DE PESTAÑAS ---
+  const [activeTab, setActiveTab] = useState('pendientes'); // 'pendientes' | 'historial'
+  const pendingItems = items.filter((it) => isActionAllowed(it));
+  const historyItems = items.filter((it) => !isActionAllowed(it));
+  const itemsToShow = activeTab === 'pendientes' ? pendingItems : historyItems;
+
   return (
     <Layout>
       <div className="max-w-5xl mx-auto p-6">
-        <h1 className="text-2xl font-semibold mb-4">Aprobaciones pendientes</h1>
+        <h1 className="text-2xl font-semibold mb-4">Aprobaciones</h1>
+
+        <div className="mb-4 flex gap-2 items-center">
+          <button
+            onClick={() => setActiveTab('pendientes')}
+            className={`px-4 py-2 rounded ${activeTab === 'pendientes' ? 'bg-teal-600 text-white' : 'bg-gray-100 text-gray-700'}`}
+          >
+            Pendientes <span className="ml-2 inline-block px-2 py-0.5 text-xs bg-white/20 rounded">{pendingItems.length}</span>
+          </button>
+          <button
+            onClick={() => setActiveTab('historial')}
+            className={`px-4 py-2 rounded ${activeTab === 'historial' ? 'bg-teal-600 text-white' : 'bg-gray-100 text-gray-700'}`}
+          >
+            Historial <span className="ml-2 inline-block px-2 py-0.5 text-xs bg-white/20 rounded">{historyItems.length}</span>
+          </button>
+          <div className="ml-auto text-sm text-gray-500">
+            {isLoading ? 'Cargando…' : `${items.length} total • ${pendingItems.length} pendientes • ${historyItems.length} en historial`}
+          </div>
+        </div>
 
         {isLoading && <div>Cargando…</div>}
         {isError && <div className="text-red-600">Error cargando aprobaciones.</div>}
         {!isLoading && items.length === 0 && <div>No hay aprobaciones para revisar.</div>}
 
-        {!isLoading && items.length > 0 && (
+        {!isLoading && itemsToShow.length > 0 && (
           <div className="bg-white shadow rounded border">
             <div className="grid grid-cols-12 gap-2 px-4 py-3 bg-gray-50 text-xs font-semibold text-gray-600">
               <div className="col-span-3">Estudiante</div>
@@ -147,7 +194,7 @@ export default function ApprovalsMine() {
             </div>
 
             <ul className="divide-y">
-              {items.map((item) => {
+              {itemsToShow.map((item) => {
                 const j = item.justificacion || {};
                 const estudianteNombre =
                   (j.estudiante_detail && j.estudiante_detail.nombre) ||
@@ -174,8 +221,14 @@ export default function ApprovalsMine() {
 
                 const docUrl = getDocUrl(j, item);
 
+                const canAct = isActionAllowed(item);
+                const estadoNormalized = normalizeEstado(item);
+
                 return (
-                  <li key={item.id} className="px-4 py-3 grid grid-cols-12 gap-2 items-center">
+                  <li
+                    key={item.id}
+                    className={`px-4 py-3 grid grid-cols-12 gap-2 items-center ${!canAct ? 'opacity-80 bg-gray-50' : ''}`}
+                  >
                     <div className="col-span-3">
                       <div className="text-sm font-medium">{estudianteNombre || '—'}</div>
                       <div className="text-xs text-gray-500">{estudianteCorreo || ''}</div>
@@ -203,86 +256,99 @@ export default function ApprovalsMine() {
                       <div className="text-sm">
                         {fechaSolicitud ? new Date(fechaSolicitud).toLocaleString() : '-'}
                       </div>
+                      <div className="mt-1">
+                        {statusBadge(item)}
+                      </div>
                     </div>
 
                     <div className="col-span-3 text-right relative">
-                      {/* Botón único que abre dropdown */}
                       <div
-                        // elemento contenedor del trigger y el menú; registramos ref para detectar clics fuera
                         ref={(el) => (menusRef.current[item.id] = el)}
                         className="inline-block text-left"
                         onClick={(e) => {
-                          // evitar que el click burbujee a document listener y cierre inmediatamente
                           e.stopPropagation();
                         }}
                       >
-                        <button
-                          type="button"
-                          onClick={() => setOpenMenuId((prev) => (prev === item.id ? null : item.id))}
-                          className="w-32 h-10 flex items-center justify-center px-3 py-2 bg-gray-100 text-gray-800 rounded hover:bg-gray-200"
-                          aria-haspopup="true"
-                          aria-expanded={openMenuId === item.id}
-                        >
-                          Acciones ▾
-                        </button>
-
-                        {/* Dropdown */}
-                        {openMenuId === item.id && (
-                          <div
-                            className="origin-top-right absolute right-0 mt-2 w-44 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 z-20"
-                            role="menu"
-                            aria-orientation="vertical"
-                            aria-labelledby={`menu-button-${item.id}`}
-                            onClick={(ev) => ev.stopPropagation()} /* prevenir cierre inmediato */
+                        {!canAct ? (
+                          <button
+                            type="button"
+                            onClick={() => openDetailModal({ ...(j || {}), id: item.id })}
+                            className="w-36 h-10 flex items-center justify-center px-3 py-2 bg-gray-100 text-gray-700 rounded hover:bg-gray-200"
+                            title={`Solicitud ${estadoNormalized} — Solo lectura`}
+                            aria-disabled="true"
                           >
-                            <div className="py-1">
-                              <button
-                                className="w-full text-left px-4 py-2 text-sm text-green-700 hover:bg-green-600 hover:text-white transition-colors duration-150 ease-in-out"
-                                role="menuitem"
-                                onClick={() => {
-                                  setOpenMenuId(null);
-                                  askApprove(item.id);
-                                }}
-                              >
-                                Aprobar
-                              </button>
+                            🔒 Ver detalle
+                          </button>
+                        ) : (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => setOpenMenuId((prev) => (prev === item.id ? null : item.id))}
+                              className="w-32 h-10 flex items-center justify-center px-3 py-2 bg-gray-100 text-gray-800 rounded hover:bg-gray-200"
+                              aria-haspopup="true"
+                              aria-expanded={openMenuId === item.id}
+                            >
+                              Acciones ▾
+                            </button>
 
-                              <button
-                                className="w-full text-left px-4 py-2 text-sm text-red-700 hover:bg-red-600 hover:text-white transition-colors duration-150 ease-in-out"
-                                role="menuitem"
-                                onClick={() => {
-                                  setOpenMenuId(null);
-                                  askReject(item.id);
-                                }}
+                            {openMenuId === item.id && (
+                              <div
+                                className="origin-top-right absolute right-0 mt-2 w-44 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 z-20"
+                                role="menu"
+                                aria-orientation="vertical"
+                                aria-labelledby={`menu-button-${item.id}`}
+                                onClick={(ev) => ev.stopPropagation()}
                               >
-                                Rechazar
-                              </button>
+                                <div className="py-1">
+                                  <button
+                                    className="w-full text-left px-4 py-2 text-sm text-green-700 hover:bg-green-600 hover:text-white transition-colors duration-150 ease-in-out"
+                                    role="menuitem"
+                                    onClick={() => {
+                                      setOpenMenuId(null);
+                                      askApprove(item.id);
+                                    }}
+                                  >
+                                    Aprobar
+                                  </button>
 
-                              <button
-                                className="w-full text-left px-4 py-2 text-sm text-gray-800 hover:bg-gray-700 hover:text-white transition-colors duration-150 ease-in-out"
-                                role="menuitem"
-                                onClick={() => {
-                                  setOpenMenuId(null);
-                                  openDetailModal({ ...(j || {}), id: item.id });
-                                }}
-                              >
-                                Ver detalle
-                              </button>
+                                  <button
+                                    className="w-full text-left px-4 py-2 text-sm text-red-700 hover:bg-red-600 hover:text-white transition-colors duration-150 ease-in-out"
+                                    role="menuitem"
+                                    onClick={() => {
+                                      setOpenMenuId(null);
+                                      askReject(item.id);
+                                    }}
+                                  >
+                                    Rechazar
+                                  </button>
 
-                              {docUrl ? (
-                                <a
-                                  className="block px-4 py-2 text-sm text-blue-700 hover:bg-blue-600 hover:text-white transition-colors duration-150 ease-in-out"
-                                  role="menuitem"
-                                  href={docUrl}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  onClick={() => setOpenMenuId(null)}
-                                >
-                                  Ver documento
-                                </a>
-                              ) : null}
-                            </div>
-                          </div>
+                                  <button
+                                    className="w-full text-left px-4 py-2 text-sm text-gray-800 hover:bg-gray-700 hover:text-white transition-colors duration-150 ease-in-out"
+                                    role="menuitem"
+                                    onClick={() => {
+                                      setOpenMenuId(null);
+                                      openDetailModal({ ...(j || {}), id: item.id });
+                                    }}
+                                  >
+                                    Ver detalle
+                                  </button>
+
+                                  {docUrl ? (
+                                    <a
+                                      className="block px-4 py-2 text-sm text-blue-700 hover:bg-blue-600 hover:text-white transition-colors duration-150 ease-in-out"
+                                      role="menuitem"
+                                      href={docUrl}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      onClick={() => setOpenMenuId(null)}
+                                    >
+                                      Ver documento
+                                    </a>
+                                  ) : null}
+                                </div>
+                              </div>
+                            )}
+                          </>
                         )}
                       </div>
                     </div>
@@ -290,6 +356,14 @@ export default function ApprovalsMine() {
                 );
               })}
             </ul>
+          </div>
+        )}
+
+        {!isLoading && itemsToShow.length === 0 && (
+          <div className="bg-white shadow rounded border p-4 text-gray-600">
+            {activeTab === 'pendientes'
+              ? 'No hay aprobaciones pendientes por revisar.'
+              : 'No hay registros en el historial.'}
           </div>
         )}
       </div>
@@ -344,7 +418,7 @@ export default function ApprovalsMine() {
                 </div>
 
                 <div>
-                  <div className="text-sm text-gray-500">Fechas</div>
+                  <div className="text-sm text-gray-500">Fechas/Períodos de Ausencia</div>
                   <div className="text-base">
                     {selectedJustificacion.fecha_ausencia_inicio || '-'} — {selectedJustificacion.fecha_ausencia_fin || '-'}
                   </div>
@@ -387,7 +461,7 @@ export default function ApprovalsMine() {
 
               <div className="mt-4">
                 <div className="text-sm text-gray-500">Estado</div>
-                <div className="text-base">{selectedJustificacion.estado || 'Pendiente'}</div>
+                <div className="text-base">{selectedJustificacion.estado || selectedJustificacion.status || 'Pendiente'}</div>
                 {selectedJustificacion.observaciones && (
                   <>
                     <div className="text-sm text-gray-500 mt-2">Observaciones</div>
@@ -399,8 +473,29 @@ export default function ApprovalsMine() {
 
             <div className="flex justify-end gap-2 px-4 py-3 border-t">
               <button className="px-4 py-2 bg-gray-200 rounded" onClick={closeDetailModal}>Cerrar</button>
-              <button className="px-4 py-2 bg-red-600 text-white rounded" onClick={() => { closeDetailModal(); if (selectedJustificacion?.id) askReject(selectedJustificacion.id); }} type="button">Rechazar</button>
-              <button className="px-4 py-2 bg-green-600 text-white rounded" onClick={() => { closeDetailModal(); if (selectedJustificacion?.id) askApprove(selectedJustificacion.id); }} type="button">Aprobar</button>
+              {isActionAllowed(selectedJustificacion) ? (
+                <>
+                  <button
+                    className="px-4 py-2 bg-red-600 text-white rounded"
+                    onClick={() => { closeDetailModal(); if (selectedJustificacion?.id) askReject(selectedJustificacion.id); }}
+                    type="button"
+                  >
+                    Rechazar
+                  </button>
+                  <button
+                    className="px-4 py-2 bg-green-600 text-white rounded"
+                    onClick={() => { closeDetailModal(); if (selectedJustificacion?.id) askApprove(selectedJustificacion.id); }}
+                    type="button"
+                  >
+                    Aprobar
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button className="px-4 py-2 bg-gray-300 text-gray-600 rounded cursor-not-allowed" disabled title="Solicitud ya procesada - solo lectura">Rechazar</button>
+                  <button className="px-4 py-2 bg-gray-300 text-gray-600 rounded cursor-not-allowed" disabled title="Solicitud ya procesada - solo lectura">Aprobar</button>
+                </>
+              )}
             </div>
           </div>
         </div>
