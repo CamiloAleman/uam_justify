@@ -154,11 +154,6 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     role = models.CharField(max_length=30, choices=ROLE_CHOICES, default="ESTUDIANTE")
 
-    #vinculación a carrera (para estudiantes y docentes)
-    carrera = models.ForeignKey(
-        Carrera, on_delete=models.SET_NULL, null=True, blank=True, related_name='usuarios'
-    )
-
     # fields required by AbstractBaseUser
     is_staff = models.BooleanField(default=False)
     is_active = models.BooleanField(default=True)

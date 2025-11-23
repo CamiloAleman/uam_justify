@@ -191,48 +191,58 @@ class JustificacionViewSet(viewsets.ModelViewSet):
 class AprobacionViewSet(viewsets.ModelViewSet):
     serializer_class = AprobacionSerializer
     queryset = Aprobacion.objects.all().order_by('-fecha_revision')
+    permission_classes = [IsAuthenticated]
 
     def get_permissions(self):
-        # mantener autenticación mínima; ajusta según tus reglas
-        permission_classes = [IsAuthenticated]
-        return [p() for p in permission_classes]
+        # ya definimos permission_classes arriba; si necesitas más lógica, añadir aquí
+        return [p() for p in self.permission_classes]
 
     def get_queryset(self):
-        # Mantén tu lógica general (si ya la tienes); este método puede coexistir con 'mine'
+        """
+        Filtrar las aprobaciones que el usuario puede ver, por rol.
+        Esta lógica aplica tanto al list() estándar como a otras vistas que usan get_queryset.
+        """
         user = self.request.user
-        qs = super().get_queryset()
-        if getattr(user, 'role', '').upper() in ('ADMIN',) or user.is_superuser:
-            return qs
-        return qs
+        qs = Aprobacion.objects.select_related('justificacion__estudiante', 'revisor').all()
+
+        # SUPERUSERS y admin ven todo
+        if user.is_superuser or getattr(user, 'role', '').upper() in ('ADMIN',):
+            return qs.order_by('-fecha_revision')
+
+        role = getattr(user, 'role', '').upper()
+
+        if role == 'COORDINADOR':
+            # Obtener la carrera del coordinador
+            user_carrera = getattr(user, 'carrera', None)
+            if user_carrera:
+                # Ver aprobaciones donde la justificación pertenece a estudiantes de la carrera
+                # o aquellas aprobaciones donde el revisor sea el propio usuario
+                qs = qs.filter(Q(justificacion__estudiante__carrera=user_carrera) | Q(revisor=user))
+            else:
+                # si no tiene carrera asignada, sólo ver las aprobaciones donde sea revisor
+                qs = qs.filter(revisor=user)
+
+        elif role == 'DOCENTE':
+            # docente ve aprobaciones donde sea revisor o donde la asignatura sea suya
+            qs = qs.filter(Q(revisor=user) | Q(justificacion__asignatura__docente=user))
+
+        elif role == 'ESTUDIANTE':
+            # estudiante ve las aprobaciones de sus propias justificaciones
+            qs = qs.filter(justificacion__estudiante=user)
+
+        else:
+            # comportamiento por defecto: sólo aprobaciones donde el usuario es revisor
+            qs = qs.filter(revisor=user)
+
+        return qs.order_by('-fecha_revision')
 
     @action(detail=False, methods=['get'], url_path='mine', permission_classes=[IsAuthenticated])
     def mine(self, request):
         """
-        GET /api/aprobaciones/mine/
-        Devuelve las aprobaciones visibles para el usuario actual, filtrado por rol.
+        Alternativa: /api/aprobaciones/mine/  — devuelve el mismo queryset filtrado por rol.
+        Mantiene compatibilidad con frontends que llaman esta ruta.
         """
-        user = request.user
-        qs = Aprobacion.objects.all()
-        role = getattr(user, 'role', '').upper()
-
-        if role == 'COORDINADOR':
-            user_carrera = getattr(user, 'carrera', None)
-            if user_carrera:
-                qs = qs.filter(Q(justificacion__estudiante__carrera=user_carrera) | Q(revisor=user))
-            else:
-                qs = qs.filter(revisor=user)
-
-        elif role == 'DOCENTE':
-            qs = qs.filter(Q(revisor=user) | Q(justificacion__asignatura__docente=user))
-
-        elif role == 'ESTUDIANTE':
-            qs = qs.filter(justificacion__estudiante=user)
-
-        else:
-            qs = qs.filter(revisor=user)
-
-        qs = qs.order_by('-fecha_revision')
-
+        qs = self.get_queryset()
         page = self.paginate_queryset(qs)
         if page is not None:
             ser = self.get_serializer(page, many=True)
@@ -245,13 +255,12 @@ class AprobacionViewSet(viewsets.ModelViewSet):
     def decide(self, request, pk=None):
         """
         POST /api/aprobaciones/{pk}/decide/
-        Body: { "estado": "APROBADO" | "RECHAZADO", "comentario": "texto opcional" }
+        Mantengo tu lógica original para decidir (APROBADO/RECHAZADO)
         """
-        aprobacion = self.get_object()  # 404 si no existe
-
-        # Opcional: chequear rol del usuario que decide
+        aprobacion = self.get_object()
         user = request.user
         role = getattr(user, 'role', '').upper()
+
         if role not in ('COORDINADOR', 'ADMIN', 'DECANO') and not user.is_superuser:
             return Response({'detail': 'No autorizado para resolver aprobaciones.'}, status=status.HTTP_403_FORBIDDEN)
 
@@ -261,16 +270,13 @@ class AprobacionViewSet(viewsets.ModelViewSet):
         if estado not in ('APROBADO', 'RECHAZADO'):
             return Response({'detail': 'Valor de estado inválido.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # actualizar la aprobación
         aprobacion.estado = estado
         aprobacion.comentario = comentario
-        aprobacion.fecha_resolucion = timezone.now()
-        # opcional: guardamos quién resolvió si el modelo tiene campo (ej: 'resuelto_por')
+        aprobacion.fecha_revision = timezone.now()
         if hasattr(aprobacion, 'resuelto_por'):
             aprobacion.resuelto_por = user
         aprobacion.save()
 
-        # actualizar la justificación relacionada si existe
         j = getattr(aprobacion, 'justificacion', None)
         if j:
             j.estado = estado
@@ -278,60 +284,15 @@ class AprobacionViewSet(viewsets.ModelViewSet):
             j.observaciones = comentario or j.observaciones
             j.save()
 
-        # Enviar correo (síncrono). Recomiendo usar Celery en producción.
         try:
             estudiante = j.estudiante if j and getattr(j, 'estudiante', None) else None
             send_decision_email(estudiante, j, estado, comentario)
         except Exception as e:
-            # no rompemos la respuesta si falla el correo; loguear en producción
+            # loggear en producción
             print("Error sending decision email:", e)
 
         ser = self.get_serializer(aprobacion)
         return Response(ser.data, status=status.HTTP_200_OK)
-
-        @action(detail=True, methods=['post'], url_path='decide')
-        def decide(self, request, pk=None):
-            """
-            Endpoint: POST /aprobaciones/{pk}/decide/
-            Body: { "estado": "APROBADO" | "RECHAZADO", "comentario": "texto opcional" }
-            """
-            aprobacion = self.get_object()  # 404 si no existe
-            estado = request.data.get('estado')
-            comentario = request.data.get('comentario', '')
-
-            if estado not in ('APROBADO', 'RECHAZADO'):
-                return Response({'detail': 'Valor de estado inválido.'}, status=status.HTTP_400_BAD_REQUEST)
-
-            # actualizar la aprobación (o la justificación según tu modelo)
-            aprobacion.estado = estado
-            aprobacion.comentario = comentario
-            aprobacion.fecha_resolucion = timezone.now()
-            aprobacion.save()
-
-            # también actualizar la justificación relacionada si hace falta
-            j = getattr(aprobacion, 'justificacion', None)
-            if j:
-                j.estado = estado
-                j.fecha_resolucion = timezone.now()
-                j.observaciones = comentario or j.observaciones
-                j.save()
-
-            # preparar envío de correo (ver abajo: función send_decision_email)
-            estudiante = None
-            if j and getattr(j, 'estudiante', None):
-                estudiante = j.estudiante
-
-            # llama a función que envía email (sin bloquear idealmente)
-            try:
-                # opción simple (sin Celery): envío síncrono
-                send_decision_email(estudiante, j, estado, comentario)
-            except Exception as e:
-                # no rompemos la respuesta por fallo en el correo
-                # loggear el error en producción
-                print("Error sending decision email:", e)
-
-            serializer = self.get_serializer(aprobacion)
-            return Response(serializer.data, status=status.HTTP_200_OK)
 
 class UserViewSet(viewsets.ModelViewSet):
     """
